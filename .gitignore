@@ -1,0 +1,64 @@
+# =============================================================================
+# .gitignore - KL Ecommerce Infrastructure
+# =============================================================================
+
+# Terraform state files (NUNCA commitear)
+*.tfstate
+*.tfstate.*
+*.tfstate.backup
+
+# Terraform variables con secretos (NUNCA commitear)
+terraform.tfvars
+*.auto.tfvars
+!terraform.tfvars.example
+
+# Terraform lock file (sí commitear en proyectos de equipo)
+# .terraform.lock.hcl
+
+# Directorio de trabajo de Terraform
+.terraform/
+.terraform.lock.hcl
+
+# Archivos de plan de Terraform
+*.tfplan
+*.plan
+
+# Archivos de override (configuración local)
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+
+# Archivos de crash de Terraform
+crash.log
+crash.*.log
+
+# Variables de entorno locales
+.env
+.env.local
+.env.*.local
+
+# Archivos de IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Windows
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# Logs
+*.log
+logs/
+
+# Archivos temporales
+tmp/
+temp/

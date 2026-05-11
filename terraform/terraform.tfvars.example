@@ -1,0 +1,41 @@
+# =============================================================================
+# EJEMPLO DE terraform.tfvars
+# Copiar como terraform.tfvars y completar con valores reales
+# NUNCA commitear terraform.tfvars con contraseñas reales
+# =============================================================================
+
+project_name = "kl-ecommerce"
+environment  = "dev"
+owner        = "ecommerce-team"
+cost_center  = "demo-university"
+
+aws_region = "us-east-1"
+
+vpc_cidr             = "10.0.0.0/16"
+public_subnet_cidrs  = ["10.0.1.0/24", "10.0.2.0/24"]
+private_subnet_cidrs = ["10.0.10.0/24", "10.0.11.0/24"]
+availability_zones   = ["us-east-1a", "us-east-1b"]
+enable_nat_gateway   = true
+single_nat_gateway   = true
+
+ecs_task_cpu    = 256
+ecs_task_memory = 512
+desired_count   = 1
+
+db_instance_class          = "db.t3.micro"
+db_engine_version          = "15.4"
+db_allocated_storage       = 20
+db_name                    = "kl_ecommerce"
+db_username                = "kl_admin"
+db_password                = "CHANGE_ME_STRONG_PASSWORD_HERE"
+db_multi_az                = false
+db_backup_retention_period = 1
+db_deletion_protection     = false
+
+frontend_bucket_name = "kl-ecommerce-frontend-dev-UNIQUE_SUFFIX"
+
+log_retention_days      = 7
+ecr_image_count_to_keep = 3
+
+api_gateway_stage_name    = "dev"
+api_gateway_logging_level = "INFO"
