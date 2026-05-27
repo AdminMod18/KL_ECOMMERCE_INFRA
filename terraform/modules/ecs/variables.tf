@@ -73,7 +73,7 @@ variable "cloudwatch_log_group_names" {
 }
 
 variable "rds_endpoint" {
-  description = "Endpoint de RDS"
+  description = "Hostname de RDS (solo host, sin puerto). Usar aws_db_instance.address, NO .endpoint"
   type        = string
 }
 

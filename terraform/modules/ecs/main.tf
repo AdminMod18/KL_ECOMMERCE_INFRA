@@ -76,6 +76,9 @@ resource "aws_ecs_task_definition" "microservices" {
         { name = "SPRING_PROFILES_ACTIVE", value = var.environment },
 
         # Configuración de base de datos
+        # IMPORTANTE: var.rds_endpoint debe ser SOLO el hostname (aws_db_instance.address),
+        # NO el endpoint completo (aws_db_instance.endpoint que incluye :5432).
+        # Pasar db_host desde main.tf evita la URL malformada jdbc:...host:5432:5432/db
         { name = "SPRING_DATASOURCE_URL", value = "jdbc:postgresql://${var.rds_endpoint}:${var.rds_port}/${var.db_name}" },
         { name = "SPRING_DATASOURCE_USERNAME", value = var.db_username },
         { name = "SPRING_DATASOURCE_DRIVER_CLASS_NAME", value = "org.postgresql.Driver" },
@@ -130,12 +133,14 @@ resource "aws_ecs_task_definition" "microservices" {
       }
 
       # Health check del contenedor
+      # startPeriod >= 150s: Spring Boot tarda ~90-120s en arrancar.
+      # Con 60s anterior el ALB marcaba la tarea unhealthy antes de que levantara.
       healthCheck = {
         command     = ["CMD-SHELL", "curl -f http://localhost:${each.value.port}${each.value.health_check_path} || exit 1"]
         interval    = 30
         timeout     = 10
         retries     = 3
-        startPeriod = 60  # Spring Boot necesita tiempo para arrancar
+        startPeriod = 150  # Spring Boot necesita ~90-120s; 150s da margen suficiente
       }
 
       # Configuración de recursos
@@ -176,6 +181,11 @@ resource "aws_ecs_service" "microservices" {
   task_definition = aws_ecs_task_definition.microservices[each.key].arn
   desired_count   = var.desired_count
   launch_type     = "FARGATE"
+
+  # Grace period para que Spring Boot (~90-120s de arranque) no sea matado
+  # por el ALB antes de que el Actuator responda. Sin esto (default=0) el
+  # servicio entra en bucle "Task failed ELB health checks".
+  health_check_grace_period_seconds = 180
 
   # Configuración de red (subnets privadas)
   network_configuration {

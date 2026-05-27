@@ -230,7 +230,12 @@ variable "microservices" {
       priority          = 110
       cpu               = 256
       memory            = 512
-      health_check_path = "/config/actuator/health"
+      # ADVERTENCIA: Spring Cloud Config Server expone Actuator en /actuator/health
+      # (sin context path por defecto). Si el servicio NO tiene
+      # server.servlet.context-path=/config en application-prod.yml,
+      # el health check fallará con /config/actuator/health.
+      # Verificar y alinear con management.endpoints.web.base-path real.
+      health_check_path = "/actuator/health"
     }
   }
 }
