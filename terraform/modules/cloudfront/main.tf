@@ -58,6 +58,32 @@ resource "aws_cloudfront_cache_policy" "frontend" {
 }
 
 # =============================================================================
+# CLOUDFRONT FUNCTION - Strip /api prefix
+# Reescribe /api/productos → /productos antes de enviar al ALB.
+# Necesario porque Spring Boot no tiene /api como context-path global.
+# =============================================================================
+resource "aws_cloudfront_function" "strip_api_prefix" {
+  name    = "${local.name_prefix}-strip-api-prefix"
+  runtime = "cloudfront-js-2.0"
+  comment = "Elimina el prefijo /api de la URI antes de enviar al ALB. /api/productos -> /productos"
+  publish = true
+
+  code = <<-EOF
+    function handler(event) {
+      var request = event.request;
+      // /api/productos → /productos
+      // /api/auth/login → /auth/login
+      request.uri = request.uri.replace(/^\/api/, '');
+      // Si queda vacío (caso /api sin nada más), poner /
+      if (request.uri === '') {
+        request.uri = '/';
+      }
+      return request;
+    }
+  EOF
+}
+
+# =============================================================================
 # DISTRIBUCIÓN CLOUDFRONT
 # =============================================================================
 resource "aws_cloudfront_distribution" "main" {
@@ -109,18 +135,26 @@ resource "aws_cloudfront_distribution" "main" {
   }
 
   # ---------------------------------------------------------------------------
-  # BEHAVIOR 1: /api/* → ALB
-  # Prioridad más alta (ordered_cache_behavior se evalúa antes que default).
-  # El path /api/productos llega al ALB como /api/productos.
-  # El ALB tiene reglas: /products/* → product-service, etc.
-  # IMPORTANTE: las reglas ALB usan /products/*, NO /api/products/*.
-  # Por eso se usa origin_path vacío y el ALB reescribe via listener rules.
+  # BEHAVIOR 1: /api/* → ALB (con rewrite de path via CloudFront Function)
+  #
+  # El browser pide: /api/productos
+  # CloudFront Function reescribe: /productos
+  # ALB recibe: /productos → regla interna → product-service → 200 JSON
+  #
+  # Esto es necesario porque Spring Boot NO tiene /api como prefijo global
+  # y el ALB no soporta rewrite de paths nativo.
   # ---------------------------------------------------------------------------
   ordered_cache_behavior {
     path_pattern     = "/api/*"
     allowed_methods  = ["DELETE", "GET", "HEAD", "OPTIONS", "PATCH", "POST", "PUT"]
     cached_methods   = ["GET", "HEAD", "OPTIONS"]
     target_origin_id = local.alb_origin_id
+
+    # CloudFront Function para eliminar /api del path
+    function_association {
+      event_type   = "viewer-request"
+      function_arn = aws_cloudfront_function.strip_api_prefix.arn
+    }
 
     # Sin cache para APIs dinámicas
     forwarded_values {
