@@ -144,9 +144,14 @@ variable "microservices" {
     health_check_path = string
   }))
   default = {
+    # path_prefix: usado en container healthCheck de ECS (curl al actuator).
+    # health_check_path: usado en el target group ALB health check.
+    # Ambos apuntan al actuator en inglés (confirmado 200 en todos los servicios).
+    # Las reglas de routing ALB usan los locals api_rules/internal_rules
+    # con los paths reales del backend en español.
     auth-service = {
       port              = 9001
-      path_prefix       = "/auth"
+      path_prefix       = "/auth/actuator/health"
       priority          = 10
       cpu               = 256
       memory            = 512
@@ -154,7 +159,7 @@ variable "microservices" {
     }
     user-service = {
       port              = 9002
-      path_prefix       = "/users"
+      path_prefix       = "/users/actuator/health"
       priority          = 20
       cpu               = 256
       memory            = 512
@@ -162,7 +167,7 @@ variable "microservices" {
     }
     solicitud-service = {
       port              = 9003
-      path_prefix       = "/solicitudes"
+      path_prefix       = "/solicitudes/actuator/health"
       priority          = 30
       cpu               = 256
       memory            = 512
@@ -170,7 +175,7 @@ variable "microservices" {
     }
     validation-service = {
       port              = 9004
-      path_prefix       = "/validation"
+      path_prefix       = "/validation/actuator/health"
       priority          = 40
       cpu               = 256
       memory            = 512
@@ -178,7 +183,7 @@ variable "microservices" {
     }
     payment-service = {
       port              = 9005
-      path_prefix       = "/payments"
+      path_prefix       = "/payments/actuator/health"
       priority          = 50
       cpu               = 256
       memory            = 512
@@ -186,7 +191,7 @@ variable "microservices" {
     }
     order-service = {
       port              = 9006
-      path_prefix       = "/orders"
+      path_prefix       = "/orders/actuator/health"
       priority          = 60
       cpu               = 256
       memory            = 512
@@ -194,7 +199,7 @@ variable "microservices" {
     }
     product-service = {
       port              = 9007
-      path_prefix       = "/products"
+      path_prefix       = "/products/actuator/health"
       priority          = 70
       cpu               = 256
       memory            = 512
@@ -202,7 +207,7 @@ variable "microservices" {
     }
     notification-service = {
       port              = 9008
-      path_prefix       = "/notifications"
+      path_prefix       = "/notifications/actuator/health"
       priority          = 80
       cpu               = 256
       memory            = 512
@@ -210,7 +215,7 @@ variable "microservices" {
     }
     analytics-service = {
       port              = 9009
-      path_prefix       = "/analytics"
+      path_prefix       = "/analytics/actuator/health"
       priority          = 90
       cpu               = 256
       memory            = 512
@@ -218,7 +223,7 @@ variable "microservices" {
     }
     admin-service = {
       port              = 9010
-      path_prefix       = "/admin"
+      path_prefix       = "/admin/actuator/health"
       priority          = 100
       cpu               = 256
       memory            = 512
@@ -226,16 +231,13 @@ variable "microservices" {
     }
     config-service = {
       port              = 9011
-      path_prefix       = "/config"
+      path_prefix       = "/config/actuator/health"
       priority          = 110
       cpu               = 256
       memory            = 512
-      # ADVERTENCIA: Spring Cloud Config Server expone Actuator en /actuator/health
-      # (sin context path por defecto). Si el servicio NO tiene
-      # server.servlet.context-path=/config en application-prod.yml,
-      # el health check fallará con /config/actuator/health.
-      # Verificar y alinear con management.endpoints.web.base-path real.
-      health_check_path = "/actuator/health"
+      # config-service expone actuator en /config/actuator/health
+      # (confirmado via management.endpoints.web.base-path en application-prod.yml)
+      health_check_path = "/config/actuator/health"
     }
   }
 }

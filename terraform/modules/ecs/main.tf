@@ -113,15 +113,19 @@ resource "aws_ecs_task_definition" "microservices" {
         # Nombre del servicio para trazabilidad
         { name = "SPRING_APPLICATION_NAME", value = each.key },
 
-        # URLs inter-servicio via ALB DNS real (resolvible dentro de la VPC).
-        # Usar var.alb_dns_name (output dinámico de module.alb) en lugar del
-        # nombre corto "${name_prefix}-alb" que NO resuelve en Route53 privado.
+        # URLs inter-servicio via ALB DNS real (paths reales del backend en español).
+        # Confirmados contra *Controller.java del backend.
         { name = "SERVICE_AUTH_URL",         value = "http://${var.alb_dns_name}/auth" },
-        { name = "SERVICE_USER_URL",         value = "http://${var.alb_dns_name}/users" },
-        { name = "SERVICE_ORDER_URL",        value = "http://${var.alb_dns_name}/orders" },
-        { name = "SERVICE_PRODUCT_URL",      value = "http://${var.alb_dns_name}/products" },
-        { name = "SERVICE_PAYMENT_URL",      value = "http://${var.alb_dns_name}/payments" },
-        { name = "SERVICE_NOTIFICATION_URL", value = "http://${var.alb_dns_name}/notifications" },
+        { name = "SERVICE_USER_URL",         value = "http://${var.alb_dns_name}/usuarios" },
+        { name = "SERVICE_ORDER_URL",        value = "http://${var.alb_dns_name}/orden" },
+        { name = "SERVICE_PRODUCT_URL",      value = "http://${var.alb_dns_name}/productos" },
+        { name = "SERVICE_PAYMENT_URL",      value = "http://${var.alb_dns_name}/pagos" },
+        { name = "SERVICE_NOTIFICATION_URL", value = "http://${var.alb_dns_name}/notificaciones" },
+        { name = "SERVICE_SOLICITUD_URL",    value = "http://${var.alb_dns_name}/solicitudes" },
+        { name = "SERVICE_VALIDATION_URL",   value = "http://${var.alb_dns_name}/validar" },
+        { name = "SERVICE_ANALYTICS_URL",    value = "http://${var.alb_dns_name}/eventos" },
+        { name = "SERVICE_ADMIN_URL",        value = "http://${var.alb_dns_name}/admin" },
+        { name = "SERVICE_CONFIG_URL",       value = "http://${var.alb_dns_name}/singleton" },
       ]
 
       # Secrets (contraseña de BD via SSM Parameter Store)
@@ -145,14 +149,14 @@ resource "aws_ecs_task_definition" "microservices" {
       }
 
       # Health check del contenedor
-      # startPeriod >= 150s: Spring Boot tarda ~90-120s en arrancar.
-      # Con 60s anterior el ALB marcaba la tarea unhealthy antes de que levantara.
+      # Usa health_check_path del mapa microservices (actuator en inglés, confirmado 200).
+      # startPeriod=150s: Spring Boot tarda ~90-120s en arrancar.
       healthCheck = {
         command     = ["CMD-SHELL", "curl -f http://localhost:${each.value.port}${each.value.health_check_path} || exit 1"]
         interval    = 30
         timeout     = 10
         retries     = 3
-        startPeriod = 150  # Spring Boot necesita ~90-120s; 150s da margen suficiente
+        startPeriod = 150
       }
 
       # Configuración de recursos

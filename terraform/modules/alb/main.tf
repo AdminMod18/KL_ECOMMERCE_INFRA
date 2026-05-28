@@ -105,139 +105,239 @@ resource "aws_lb_listener" "http" {
 }
 
 # =============================================================================
-# LISTENER RULES - Routing por path prefix
+# LISTENER RULES
 #
-# ARQUITECTURA DE PATHS:
-#   Tráfico CloudFront → ALB:  /api/{backend_path}/*
-#   Tráfico interno VPC → ALB: /{backend_path}/*
+# ARQUITECTURA DE PATHS (confirmada contra código backend *Controller.java):
 #
-# PATHS REALES DEL BACKEND (confirmados via actuator/health + logs):
-#   Todos los servicios tienen context path '/' (sin prefijo global).
-#   El actuator base path de cada servicio es /{service_name}/actuator.
-#   Los controllers de negocio siguen el mismo prefijo que el actuator.
+#   Tráfico CloudFront → ALB:  /api/{path_real_backend}/*
+#   Tráfico interno VPC → ALB: /{path_real_backend}/*
 #
-# REGLAS POR SERVICIO:
-#   1. microservices       → /{path_prefix}/* (tráfico interno VPC)
-#   2. microservices_api   → /api/{path_prefix}/* (tráfico CloudFront)
-#   3. microservices_api_es → /api/{es_path}/* (paths en español, dual-mode)
+# PATHS REALES DEL BACKEND (Spring Boot, context-path = '/'):
+#   auth-service        → /auth/*          (login, roles, refresh, sincronizar-vendedor)
+#   user-service        → /usuarios/*      (CRUD usuarios + /interno/* interno)
+#   solicitud-service   → /solicitudes/*   (CRUD + validacion + activacion)
+#   validation-service  → /validar/*       (+ /internal/mock/* solo interno)
+#   payment-service     → /pagos/*
+#   order-service       → /orden/*, /ordenes/*
+#   product-service     → /productos/*     (+ interacciones)
+#   notification-service→ /notificaciones/eventos/*
+#   analytics-service   → /eventos/*, /kpis/*  (bajo prefijo /api/analytics en CF)
+#   admin-service       → /admin/*         (parametros, auditoria, logs-error)
+#   config-service      → /singleton/*
 #
-# TABLA DE PATHS CONFIRMADOS:
-#   solicitud-service  → /solicitudes (200 confirmado)
-#   auth-service       → /auth        (405 en /auth/login confirma path)
-#   product-service    → /products    (actuator en /products/actuator)
-#   user-service       → /users       (actuator en /users/actuator)
-#   order-service      → /orders      (actuator en /orders/actuator)
-#   payment-service    → /payments    (actuator en /payments/actuator)
-#   notification-svc   → /notifications (actuator en /notifications/actuator)
-#   admin-service      → /admin       (actuator en /admin/actuator)
-#   analytics-service  → /analytics   (actuator en /analytics/actuator)
-#   validation-service → /validation  (actuator en /validation/actuator)
+# HEALTH CHECKS (application-prod.yml):
+#   Cada servicio expone actuator en /{nombre_en_ingles}/actuator/health
+#   (configurado via management.endpoints.web.base-path en el código)
+#
+# PRIORIDADES:
+#   1        → health check global ALB
+#   10-110   → reglas internas VPC (/{path_real}/*)
+#   210-510  → reglas CloudFront /api/* (prioridad base+200)
+#   610-710  → reglas extra order-service (/ordenes) y analytics (/kpis)
 # =============================================================================
 
-# Paths alternativos en español para transición frontend.
-# Permite que /api/productos, /api/pagos, etc. lleguen al servicio correcto
-# mientras el frontend migra a paths en inglés o el backend añade aliases.
+# ---------------------------------------------------------------------------
+# LOCAL: mapeo explícito path_real_backend → servicio
+# Fuente: *Controller.java del backend + tabla confirmada por el equipo.
+# ---------------------------------------------------------------------------
 locals {
-  # Mapa: nombre_servicio → path_español adicional para reglas /api/*
-  # Solo se crean reglas extra para servicios con path en español diferente al inglés.
-  api_es_paths = {
-    "product-service"      = "/api/productos"
-    "payment-service"      = "/api/pagos"
-    "order-service"        = "/api/pedidos"
-    "user-service"         = "/api/usuarios"
-    "notification-service" = "/api/notificaciones"
-    "validation-service"   = "/api/validacion"
-    "solicitud-service"    = "/api/solicitudes"  # ya coincide con path_prefix pero lo incluimos
-  }
-}
-
-# Reglas para tráfico desde CloudFront (/api/{path_prefix}/*)
-# Prioridad base+200 para no colisionar con reglas internas (base 10-110)
-resource "aws_lb_listener_rule" "microservices_api" {
-  for_each = var.microservices
-
-  listener_arn = aws_lb_listener.http.arn
-  priority     = each.value.priority + 200
-
-  condition {
-    path_pattern {
-      values = [
-        "/api${each.value.path_prefix}",
-        "/api${each.value.path_prefix}/*",
-      ]
+  # Reglas CloudFront /api/*: cada entrada es una regla independiente.
+  # Formato: { rule_key → { service, patterns, priority } }
+  # patterns: lista de path patterns que el ALB evaluará (wildcards AWS ALB).
+  # priority: única por listener, sin colisiones.
+  api_rules = {
+    # auth-service: /api/auth/*
+    "auth" = {
+      service  = "auth-service"
+      patterns = ["/api/auth", "/api/auth/*"]
+      priority = 210
+    }
+    # user-service: /api/usuarios/*
+    "usuarios" = {
+      service  = "user-service"
+      patterns = ["/api/usuarios", "/api/usuarios/*"]
+      priority = 220
+    }
+    # solicitud-service: /api/solicitudes/*
+    "solicitudes" = {
+      service  = "solicitud-service"
+      patterns = ["/api/solicitudes", "/api/solicitudes/*"]
+      priority = 230
+    }
+    # validation-service: /api/validar/*
+    "validar" = {
+      service  = "validation-service"
+      patterns = ["/api/validar", "/api/validar/*"]
+      priority = 240
+    }
+    # payment-service: /api/pagos/*
+    "pagos" = {
+      service  = "payment-service"
+      patterns = ["/api/pagos", "/api/pagos/*"]
+      priority = 250
+    }
+    # order-service: /api/orden/* y /api/ordenes/*
+    "orden" = {
+      service  = "order-service"
+      patterns = ["/api/orden", "/api/orden/*", "/api/ordenes", "/api/ordenes/*"]
+      priority = 260
+    }
+    # product-service: /api/productos/*
+    "productos" = {
+      service  = "product-service"
+      patterns = ["/api/productos", "/api/productos/*"]
+      priority = 270
+    }
+    # notification-service: /api/notificaciones/*
+    "notificaciones" = {
+      service  = "notification-service"
+      patterns = ["/api/notificaciones", "/api/notificaciones/*"]
+      priority = 280
+    }
+    # analytics-service: /api/analytics/* cubre /api/analytics/eventos y /api/analytics/kpis
+    # El backend expone /eventos y /kpis; CloudFront añade el prefijo /api/analytics.
+    # El ALB enruta /api/analytics/* → analytics-service que recibe /api/analytics/eventos.
+    # NOTA: el backend debe tener @RequestMapping("/api/analytics") o el frontend
+    # debe llamar /api/analytics/eventos → backend recibe /api/analytics/eventos.
+    # Si el backend solo tiene /eventos (sin prefijo), añadir context-path en backend.
+    "analytics" = {
+      service  = "analytics-service"
+      patterns = ["/api/analytics", "/api/analytics/*"]
+      priority = 290
+    }
+    # admin-service: /api/admin/*
+    "admin" = {
+      service  = "admin-service"
+      patterns = ["/api/admin", "/api/admin/*"]
+      priority = 300
+    }
+    # config-service: /api/config/* y /api/singleton/*
+    "config" = {
+      service  = "config-service"
+      patterns = ["/api/config", "/api/config/*", "/api/singleton", "/api/singleton/*"]
+      priority = 310
     }
   }
 
-  action {
-    type             = "forward"
-    target_group_arn = aws_lb_target_group.microservices[each.key].arn
-  }
-
-  tags = merge(var.common_tags, {
-    Name    = "${local.name_prefix}-${each.key}-api-rule"
-    Service = each.key
-    Type    = "cloudfront-api-rule"
-  })
-}
-
-# Reglas en español para tráfico CloudFront (/api/{es_path}/*)
-# Prioridad base+400 para no colisionar con las reglas en inglés (base+200)
-resource "aws_lb_listener_rule" "microservices_api_es" {
-  for_each = local.api_es_paths
-
-  listener_arn = aws_lb_listener.http.arn
-  priority     = var.microservices[each.key].priority + 400
-
-  condition {
-    path_pattern {
-      values = [
-        each.value,
-        "${each.value}/*",
-      ]
+  # Reglas internas VPC: paths directos sin prefijo /api
+  # Usadas por comunicación inter-servicio (SERVICE_*_URL en ECS).
+  internal_rules = {
+    "auth-internal" = {
+      service  = "auth-service"
+      patterns = ["/auth", "/auth/*"]
+      priority = 10
+    }
+    "usuarios-internal" = {
+      service  = "user-service"
+      patterns = ["/usuarios", "/usuarios/*", "/interno", "/interno/*"]
+      priority = 20
+    }
+    "solicitudes-internal" = {
+      service  = "solicitud-service"
+      patterns = ["/solicitudes", "/solicitudes/*"]
+      priority = 30
+    }
+    "validar-internal" = {
+      service  = "validation-service"
+      patterns = ["/validar", "/validar/*", "/internal", "/internal/*"]
+      priority = 40
+    }
+    "pagos-internal" = {
+      service  = "payment-service"
+      patterns = ["/pagos", "/pagos/*"]
+      priority = 50
+    }
+    "orden-internal" = {
+      service  = "order-service"
+      patterns = ["/orden", "/orden/*", "/ordenes", "/ordenes/*"]
+      priority = 60
+    }
+    "productos-internal" = {
+      service  = "product-service"
+      patterns = ["/productos", "/productos/*"]
+      priority = 70
+    }
+    "notificaciones-internal" = {
+      service  = "notification-service"
+      patterns = ["/notificaciones", "/notificaciones/*"]
+      priority = 80
+    }
+    "analytics-internal" = {
+      service  = "analytics-service"
+      patterns = ["/eventos", "/eventos/*", "/kpis", "/kpis/*"]
+      priority = 90
+    }
+    "admin-internal" = {
+      service  = "admin-service"
+      patterns = ["/admin", "/admin/*"]
+      priority = 100
+    }
+    "config-internal" = {
+      service  = "config-service"
+      patterns = ["/singleton", "/singleton/*"]
+      priority = 110
     }
   }
-
-  action {
-    type             = "forward"
-    target_group_arn = aws_lb_target_group.microservices[each.key].arn
-  }
-
-  tags = merge(var.common_tags, {
-    Name    = "${local.name_prefix}-${each.key}-api-es-rule"
-    Service = each.key
-    Type    = "cloudfront-api-es-rule"
-  })
 }
 
-# Reglas para tráfico interno VPC ({path_prefix}/*)
-# Prioridad base (10-110) — más alta que las reglas /api/* (200+, 400+)
-resource "aws_lb_listener_rule" "microservices" {
-  for_each = var.microservices
+# ---------------------------------------------------------------------------
+# REGLAS CloudFront → ALB: /api/{path_real}/*
+# ---------------------------------------------------------------------------
+resource "aws_lb_listener_rule" "api" {
+  for_each = local.api_rules
 
   listener_arn = aws_lb_listener.http.arn
   priority     = each.value.priority
 
   condition {
     path_pattern {
-      values = ["${each.value.path_prefix}/*", each.value.path_prefix]
+      values = each.value.patterns
     }
   }
 
   action {
     type             = "forward"
-    target_group_arn = aws_lb_target_group.microservices[each.key].arn
+    target_group_arn = aws_lb_target_group.microservices[each.value.service].arn
   }
 
   tags = merge(var.common_tags, {
-    Name    = "${local.name_prefix}-${each.key}-rule"
-    Service = each.key
+    Name    = "${local.name_prefix}-${each.key}-api-rule"
+    Service = each.value.service
+    Type    = "cloudfront-api-rule"
+  })
+}
+
+# ---------------------------------------------------------------------------
+# REGLAS internas VPC: /{path_real}/*
+# Usadas por SERVICE_*_URL en task definitions ECS.
+# ---------------------------------------------------------------------------
+resource "aws_lb_listener_rule" "internal" {
+  for_each = local.internal_rules
+
+  listener_arn = aws_lb_listener.http.arn
+  priority     = each.value.priority
+
+  condition {
+    path_pattern {
+      values = each.value.patterns
+    }
+  }
+
+  action {
+    type             = "forward"
+    target_group_arn = aws_lb_target_group.microservices[each.value.service].arn
+  }
+
+  tags = merge(var.common_tags, {
+    Name    = "${local.name_prefix}-${each.key}-internal-rule"
+    Service = each.value.service
     Type    = "internal-rule"
   })
 }
 
-# =============================================================================
-# LISTENER RULE - Health check global del ALB
-# =============================================================================
+# ---------------------------------------------------------------------------
+# REGLA health check global del ALB (prioridad 1, más alta de todas)
+# ---------------------------------------------------------------------------
 resource "aws_lb_listener_rule" "health" {
   listener_arn = aws_lb_listener.http.arn
   priority     = 1
