@@ -89,8 +89,18 @@ resource "aws_ecs_task_definition" "microservices" {
         { name = "SPRING_JPA_DATABASE_PLATFORM", value = "org.hibernate.dialect.PostgreSQLDialect" },
 
         # Actuator para health checks
-        { name = "MANAGEMENT_ENDPOINTS_WEB_EXPOSURE_INCLUDE", value = "health,info,metrics" },
+        # mappings expuesto temporalmente para descubrir endpoints reales del backend.
+        # Una vez confirmados los paths, reducir a "health,info,metrics".
+        { name = "MANAGEMENT_ENDPOINTS_WEB_EXPOSURE_INCLUDE", value = "health,info,metrics,mappings" },
         { name = "MANAGEMENT_ENDPOINT_HEALTH_SHOW_DETAILS", value = "always" },
+
+        # HikariCP connection pool - CRÍTICO para db.t3.micro (max_connections=100).
+        # 11 servicios × 5 conexiones = 55 conexiones máximas (margen seguro bajo 100).
+        # Sin este límite HikariCP usa 10 por defecto → 110 conexiones → crash RDS.
+        { name = "SPRING_DATASOURCE_HIKARI_MAXIMUM_POOL_SIZE", value = "5" },
+        { name = "SPRING_DATASOURCE_HIKARI_MINIMUM_IDLE",      value = "2" },
+        { name = "SPRING_DATASOURCE_HIKARI_CONNECTION_TIMEOUT", value = "30000" },
+        { name = "SPRING_DATASOURCE_HIKARI_IDLE_TIMEOUT",      value = "600000" },
 
         # AWS Region
         { name = "AWS_DEFAULT_REGION", value = var.aws_region },

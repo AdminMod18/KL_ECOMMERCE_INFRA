@@ -106,25 +106,58 @@ resource "aws_lb_listener" "http" {
 
 # =============================================================================
 # LISTENER RULES - Routing por path prefix
-# Cada microservicio tiene DOS reglas:
-#   1. /api{path_prefix}/* y /api{path_prefix}  → para tráfico desde CloudFront
-#   2. {path_prefix}/* y {path_prefix}           → para tráfico interno VPC
 #
-# CloudFront envía /api/productos → ALB recibe /api/productos
-# La regla /api/products/* captura eso y lo manda al product-service.
-# El microservicio Spring Boot tiene server.servlet.context-path=/products
-# por lo que el ALB debe reescribir /api/products/... → /products/...
-# Esto se hace con un forward simple; Spring Boot recibe la URL completa
-# y la maneja según su context-path configurado.
+# ARQUITECTURA DE PATHS:
+#   Tráfico CloudFront → ALB:  /api/{backend_path}/*
+#   Tráfico interno VPC → ALB: /{backend_path}/*
+#
+# PATHS REALES DEL BACKEND (confirmados via actuator/health + logs):
+#   Todos los servicios tienen context path '/' (sin prefijo global).
+#   El actuator base path de cada servicio es /{service_name}/actuator.
+#   Los controllers de negocio siguen el mismo prefijo que el actuator.
+#
+# REGLAS POR SERVICIO:
+#   1. microservices       → /{path_prefix}/* (tráfico interno VPC)
+#   2. microservices_api   → /api/{path_prefix}/* (tráfico CloudFront)
+#   3. microservices_api_es → /api/{es_path}/* (paths en español, dual-mode)
+#
+# TABLA DE PATHS CONFIRMADOS:
+#   solicitud-service  → /solicitudes (200 confirmado)
+#   auth-service       → /auth        (405 en /auth/login confirma path)
+#   product-service    → /products    (actuator en /products/actuator)
+#   user-service       → /users       (actuator en /users/actuator)
+#   order-service      → /orders      (actuator en /orders/actuator)
+#   payment-service    → /payments    (actuator en /payments/actuator)
+#   notification-svc   → /notifications (actuator en /notifications/actuator)
+#   admin-service      → /admin       (actuator en /admin/actuator)
+#   analytics-service  → /analytics   (actuator en /analytics/actuator)
+#   validation-service → /validation  (actuator en /validation/actuator)
 # =============================================================================
 
+# Paths alternativos en español para transición frontend.
+# Permite que /api/productos, /api/pagos, etc. lleguen al servicio correcto
+# mientras el frontend migra a paths en inglés o el backend añade aliases.
+locals {
+  # Mapa: nombre_servicio → path_español adicional para reglas /api/*
+  # Solo se crean reglas extra para servicios con path en español diferente al inglés.
+  api_es_paths = {
+    "product-service"      = "/api/productos"
+    "payment-service"      = "/api/pagos"
+    "order-service"        = "/api/pedidos"
+    "user-service"         = "/api/usuarios"
+    "notification-service" = "/api/notificaciones"
+    "validation-service"   = "/api/validacion"
+    "solicitud-service"    = "/api/solicitudes"  # ya coincide con path_prefix pero lo incluimos
+  }
+}
+
 # Reglas para tráfico desde CloudFront (/api/{path_prefix}/*)
+# Prioridad base+200 para no colisionar con reglas internas (base 10-110)
 resource "aws_lb_listener_rule" "microservices_api" {
   for_each = var.microservices
 
   listener_arn = aws_lb_listener.http.arn
-  # Prioridad offset +200 para no colisionar con las reglas directas
-  priority = each.value.priority + 200
+  priority     = each.value.priority + 200
 
   condition {
     path_pattern {
@@ -147,7 +180,37 @@ resource "aws_lb_listener_rule" "microservices_api" {
   })
 }
 
+# Reglas en español para tráfico CloudFront (/api/{es_path}/*)
+# Prioridad base+400 para no colisionar con las reglas en inglés (base+200)
+resource "aws_lb_listener_rule" "microservices_api_es" {
+  for_each = local.api_es_paths
+
+  listener_arn = aws_lb_listener.http.arn
+  priority     = var.microservices[each.key].priority + 400
+
+  condition {
+    path_pattern {
+      values = [
+        each.value,
+        "${each.value}/*",
+      ]
+    }
+  }
+
+  action {
+    type             = "forward"
+    target_group_arn = aws_lb_target_group.microservices[each.key].arn
+  }
+
+  tags = merge(var.common_tags, {
+    Name    = "${local.name_prefix}-${each.key}-api-es-rule"
+    Service = each.key
+    Type    = "cloudfront-api-es-rule"
+  })
+}
+
 # Reglas para tráfico interno VPC ({path_prefix}/*)
+# Prioridad base (10-110) — más alta que las reglas /api/* (200+, 400+)
 resource "aws_lb_listener_rule" "microservices" {
   for_each = var.microservices
 

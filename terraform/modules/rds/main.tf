@@ -31,31 +31,35 @@ resource "aws_db_subnet_group" "main" {
 resource "aws_db_parameter_group" "main" {
   name        = "${local.name_prefix}-postgres-params"
   family      = "postgres15"
-  description = "Parameter group para PostgreSQL 15 - KL Ecommerce"
+  description = "Parameter group for PostgreSQL 15 - KL Ecommerce"
 
-  # Configuración de conexiones
+  # Max connections - calculado para 11 microservicios × 5 conexiones HikariCP
+  # db.t3.micro soporta hasta ~100 conexiones por defecto.
+  # Subimos a 200 para dar margen a futuros servicios y conexiones admin.
+  # NOTA: este parámetro requiere reboot de la instancia RDS para aplicar.
   parameter {
-    name  = "max_connections"
-    value = "100"  # Suficiente para demo con múltiples microservicios
+    name         = "max_connections"
+    value        = "200"
+    apply_method = "pending-reboot"
   }
 
-  # Logging de queries lentas
+  # Log slow queries (dynamic parameter - immediate apply is fine)
   parameter {
-    name  = "log_min_duration_statement"
-    value = "1000"  # Log queries > 1 segundo
+    name         = "log_min_duration_statement"
+    value        = "1000"
+    apply_method = "immediate"
   }
 
-  # Timezone
+  # Timezone (dynamic parameter)
   parameter {
-    name  = "timezone"
-    value = "UTC"
+    name         = "timezone"
+    value        = "UTC"
+    apply_method = "immediate"
   }
 
-  # Configuración de memoria compartida
-  parameter {
-    name  = "shared_preload_libraries"
-    value = "pg_stat_statements"
-  }
+  # NOTE: shared_preload_libraries is a static parameter (requires reboot)
+  # and cannot be set via Terraform parameter group on existing instances.
+  # Enable it manually after creation if needed.
 
   tags = merge(var.common_tags, {
     Name = "${local.name_prefix}-postgres-params"
