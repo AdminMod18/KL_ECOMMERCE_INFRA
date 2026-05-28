@@ -7,8 +7,13 @@ output "cloudfront_domain_name" {
   value       = aws_cloudfront_distribution.main.domain_name
 }
 
+output "cloudfront_api_url" {
+  description = "URL pública de la API via CloudFront. Usar como VITE_API_URL en el build del frontend. Formato: https://<domain>/api"
+  value       = "https://${aws_cloudfront_distribution.main.domain_name}/api"
+}
+
 output "distribution_id" {
-  description = "ID de la distribución CloudFront"
+  description = "ID de la distribución CloudFront (necesario para invalidar cache)"
   value       = aws_cloudfront_distribution.main.id
 }
 
