@@ -41,7 +41,9 @@ resource "aws_lb" "main" {
 resource "aws_lb_target_group" "microservices" {
   for_each = var.microservices
 
-  name        = "${local.name_prefix}-${substr(each.key, 0, min(length(each.key), 20))}-tg"
+  # AWS limit: 32 chars max. Use short env prefix + service abbreviation + hash suffix
+  # Format: <env>-<8-char-service>-<6-char-hash>-tg  (stays under 32)
+  name        = "${var.environment}-${substr(each.key, 0, 8)}-${substr(md5(each.key), 0, 6)}-tg"
   port        = each.value.port
   protocol    = "HTTP"
   vpc_id      = var.vpc_id
@@ -104,22 +106,60 @@ resource "aws_lb_listener" "http" {
 
 # =============================================================================
 # LISTENER RULES - Routing por path prefix
-# Cada microservicio tiene su propia regla de routing
+# Cada microservicio tiene DOS reglas:
+#   1. /api{path_prefix}/* y /api{path_prefix}  → para tráfico desde CloudFront
+#   2. {path_prefix}/* y {path_prefix}           → para tráfico interno VPC
+#
+# CloudFront envía /api/productos → ALB recibe /api/productos
+# La regla /api/products/* captura eso y lo manda al product-service.
+# El microservicio Spring Boot tiene server.servlet.context-path=/products
+# por lo que el ALB debe reescribir /api/products/... → /products/...
+# Esto se hace con un forward simple; Spring Boot recibe la URL completa
+# y la maneja según su context-path configurado.
 # =============================================================================
+
+# Reglas para tráfico desde CloudFront (/api/{path_prefix}/*)
+resource "aws_lb_listener_rule" "microservices_api" {
+  for_each = var.microservices
+
+  listener_arn = aws_lb_listener.http.arn
+  # Prioridad offset +200 para no colisionar con las reglas directas
+  priority = each.value.priority + 200
+
+  condition {
+    path_pattern {
+      values = [
+        "/api${each.value.path_prefix}",
+        "/api${each.value.path_prefix}/*",
+      ]
+    }
+  }
+
+  action {
+    type             = "forward"
+    target_group_arn = aws_lb_target_group.microservices[each.key].arn
+  }
+
+  tags = merge(var.common_tags, {
+    Name    = "${local.name_prefix}-${each.key}-api-rule"
+    Service = each.key
+    Type    = "cloudfront-api-rule"
+  })
+}
+
+# Reglas para tráfico interno VPC ({path_prefix}/*)
 resource "aws_lb_listener_rule" "microservices" {
   for_each = var.microservices
 
   listener_arn = aws_lb_listener.http.arn
   priority     = each.value.priority
 
-  # Condición: path prefix del microservicio
   condition {
     path_pattern {
       values = ["${each.value.path_prefix}/*", each.value.path_prefix]
     }
   }
 
-  # Acción: forward al target group correspondiente
   action {
     type             = "forward"
     target_group_arn = aws_lb_target_group.microservices[each.key].arn
@@ -128,6 +168,7 @@ resource "aws_lb_listener_rule" "microservices" {
   tags = merge(var.common_tags, {
     Name    = "${local.name_prefix}-${each.key}-rule"
     Service = each.key
+    Type    = "internal-rule"
   })
 }
 

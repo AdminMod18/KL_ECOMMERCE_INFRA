@@ -20,15 +20,24 @@ variable "frontend_bucket_id" {
   type        = string
 }
 
-variable "api_gateway_url" {
-  description = "URL de invocación del API Gateway"
+variable "alb_dns_name" {
+  description = "DNS público del ALB. Origen CloudFront para el behavior /api/*. Ej: kl-ecommerce-prod-alb-985321400.us-east-2.elb.amazonaws.com"
   type        = string
+}
+
+# api_gateway_url se mantiene como variable opcional para no romper
+# referencias externas, pero ya no se usa como origen de CloudFront.
+# CloudFront apunta directamente al ALB para /api/*.
+variable "api_gateway_url" {
+  description = "URL del API Gateway (no usado como origen CloudFront; mantenido para compatibilidad de outputs)"
+  type        = string
+  default     = ""
 }
 
 variable "api_gateway_stage_name" {
   description = "Nombre del stage de API Gateway"
   type        = string
-  default     = "dev"
+  default     = "prod"
 }
 
 variable "common_tags" {

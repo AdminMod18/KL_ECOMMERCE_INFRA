@@ -1,20 +1,26 @@
 # =============================================================================
 # MÓDULO CLOUDFRONT - CDN Global
 # Proyecto: KL Ecommerce
-# Descripción: Distribución CloudFront con dos orígenes:
-#              1. S3 para el frontend React/Vite
-#              2. API Gateway para las llamadas /api/*
+# Descripción: Distribución CloudFront con DOS orígenes:
+#              1. S3  → frontend React/Vite  (default behavior)
+#              2. ALB → microservicios ECS   (behavior /api/*)
+#
+# ARQUITECTURA:
+#   Browser → CloudFront → S3   (rutas estáticas: /, /assets/*, etc.)
+#   Browser → CloudFront → ALB  (rutas de API:    /api/*)
+#
+# NOTA: API Gateway se mantiene como recurso independiente para uso futuro
+# (webhooks, auth flows, etc.) pero NO está en el path crítico del frontend.
 # =============================================================================
 
 locals {
-  name_prefix          = "${var.project_name}-${var.environment}"
-  s3_origin_id         = "S3-${var.frontend_bucket_id}"
-  api_gateway_origin_id = "APIGateway-${var.project_name}"
+  name_prefix   = "${var.project_name}-${var.environment}"
+  s3_origin_id  = "S3-${var.frontend_bucket_id}"
+  alb_origin_id = "ALB-${var.project_name}-${var.environment}"
 }
 
 # =============================================================================
 # ORIGIN ACCESS CONTROL (OAC) para S3
-# Reemplaza el antiguo OAI - más seguro y moderno
 # =============================================================================
 resource "aws_cloudfront_origin_access_control" "s3" {
   name                              = "${local.name_prefix}-s3-oac"
@@ -28,7 +34,7 @@ resource "aws_cloudfront_origin_access_control" "s3" {
 # CACHE POLICIES
 # =============================================================================
 
-# Cache policy para el frontend (archivos estáticos)
+# Cache policy para assets estáticos (JS, CSS, imágenes)
 resource "aws_cloudfront_cache_policy" "frontend" {
   name        = "${local.name_prefix}-frontend-cache-policy"
   comment     = "Cache policy para assets estáticos del frontend React/Vite"
@@ -59,66 +65,75 @@ resource "aws_cloudfront_distribution" "main" {
   is_ipv6_enabled     = true
   comment             = "KL Ecommerce CDN - ${var.environment}"
   default_root_object = "index.html"
-  price_class         = "PriceClass_100"  # Solo US, Canada, Europa (menor costo)
+  price_class         = "PriceClass_100"
   http_version        = "http2and3"
 
-  # -------------------------------------------------------------------------
-  # ORIGEN 1: S3 Frontend
-  # -------------------------------------------------------------------------
+  # ---------------------------------------------------------------------------
+  # ORIGEN 1: S3 Frontend (archivos estáticos)
+  # ---------------------------------------------------------------------------
   origin {
     domain_name              = var.frontend_bucket_regional_domain
     origin_id                = local.s3_origin_id
     origin_access_control_id = aws_cloudfront_origin_access_control.s3.id
 
-    # Custom headers para identificar origen CloudFront
     custom_header {
       name  = "X-CloudFront-Origin"
       value = "s3-frontend"
     }
   }
 
-  # -------------------------------------------------------------------------
-  # ORIGEN 2: API Gateway
-  # Extrae el dominio del URL del API Gateway (ej: abc123.execute-api.us-east-1.amazonaws.com)
-  # -------------------------------------------------------------------------
+  # ---------------------------------------------------------------------------
+  # ORIGEN 2: ALB (microservicios ECS)
+  # CloudFront → ALB puerto 80 (HTTP).
+  # El ALB es público (internet-facing) y tiene reglas de routing por path.
+  # No se usa HTTPS aquí porque el ALB no tiene certificado ACM en este setup;
+  # la conexión CloudFront→usuario sí es HTTPS (viewer_protocol_policy).
+  # ---------------------------------------------------------------------------
   origin {
-    # El URL del API Gateway tiene formato: https://{id}.execute-api.{region}.amazonaws.com/{stage}
-    # Necesitamos solo el dominio sin https:// y sin el path del stage
-    domain_name = regex("https://([^/]+)", var.api_gateway_url)[0]
-    origin_id   = local.api_gateway_origin_id
-    origin_path = "/${var.api_gateway_stage_name}"
+    domain_name = var.alb_dns_name
+    origin_id   = local.alb_origin_id
 
     custom_origin_config {
-      http_port              = 80
-      https_port             = 443
-      origin_protocol_policy = "https-only"
-      origin_ssl_protocols   = ["TLSv1.2"]
-
-      # Timeouts
+      http_port                = 80
+      https_port               = 443
+      origin_protocol_policy   = "http-only"   # ALB sin certificado ACM → HTTP
+      origin_ssl_protocols     = ["TLSv1.2"]
       origin_keepalive_timeout = 5
-      origin_read_timeout      = 30
+      origin_read_timeout      = 60            # Spring Boot puede tardar en responder
     }
 
     custom_header {
       name  = "X-CloudFront-Origin"
-      value = "api-gateway"
+      value = "alb-backend"
     }
   }
 
-  # -------------------------------------------------------------------------
-  # BEHAVIOR: /api/* → API Gateway
-  # -------------------------------------------------------------------------
+  # ---------------------------------------------------------------------------
+  # BEHAVIOR 1: /api/* → ALB
+  # Prioridad más alta (ordered_cache_behavior se evalúa antes que default).
+  # El path /api/productos llega al ALB como /api/productos.
+  # El ALB tiene reglas: /products/* → product-service, etc.
+  # IMPORTANTE: las reglas ALB usan /products/*, NO /api/products/*.
+  # Por eso se usa origin_path vacío y el ALB reescribe via listener rules.
+  # ---------------------------------------------------------------------------
   ordered_cache_behavior {
     path_pattern     = "/api/*"
     allowed_methods  = ["DELETE", "GET", "HEAD", "OPTIONS", "PATCH", "POST", "PUT"]
     cached_methods   = ["GET", "HEAD", "OPTIONS"]
-    target_origin_id = local.api_gateway_origin_id
+    target_origin_id = local.alb_origin_id
 
-    # Sin cache para API (datos dinámicos)
+    # Sin cache para APIs dinámicas
     forwarded_values {
       query_string = true
-      headers      = ["Authorization", "Content-Type", "Accept", "Origin", "X-Requested-With"]
-
+      headers = [
+        "Authorization",
+        "Content-Type",
+        "Accept",
+        "Origin",
+        "X-Requested-With",
+        "Access-Control-Request-Headers",
+        "Access-Control-Request-Method",
+      ]
       cookies {
         forward = "all"
       }
@@ -131,9 +146,9 @@ resource "aws_cloudfront_distribution" "main" {
     compress               = true
   }
 
-  # -------------------------------------------------------------------------
-  # BEHAVIOR: /assets/* → S3 (archivos estáticos con cache largo)
-  # -------------------------------------------------------------------------
+  # ---------------------------------------------------------------------------
+  # BEHAVIOR 2: /assets/* → S3 (cache largo para JS/CSS hasheados)
+  # ---------------------------------------------------------------------------
   ordered_cache_behavior {
     path_pattern     = "/assets/*"
     allowed_methods  = ["GET", "HEAD", "OPTIONS"]
@@ -146,9 +161,10 @@ resource "aws_cloudfront_distribution" "main" {
     compress               = true
   }
 
-  # -------------------------------------------------------------------------
+  # ---------------------------------------------------------------------------
   # BEHAVIOR DEFAULT: S3 Frontend (React SPA)
-  # -------------------------------------------------------------------------
+  # Todas las rutas no capturadas por los behaviors anteriores van a S3.
+  # ---------------------------------------------------------------------------
   default_cache_behavior {
     allowed_methods  = ["GET", "HEAD", "OPTIONS"]
     cached_methods   = ["GET", "HEAD"]
@@ -163,15 +179,16 @@ resource "aws_cloudfront_distribution" "main" {
 
     viewer_protocol_policy = "redirect-to-https"
     min_ttl                = 0
-    default_ttl            = 3600   # 1 hora para HTML
-    max_ttl                = 86400  # 1 día máximo
+    default_ttl            = 3600
+    max_ttl                = 86400
     compress               = true
   }
 
-  # -------------------------------------------------------------------------
-  # CUSTOM ERROR RESPONSES - SPA React Router
-  # Redirige errores 403/404 de S3 a index.html para React Router
-  # -------------------------------------------------------------------------
+  # ---------------------------------------------------------------------------
+  # CUSTOM ERROR RESPONSES - React Router SPA
+  # S3 devuelve 403/404 para rutas SPA → CloudFront sirve index.html
+  # IMPORTANTE: solo aplica al origen S3, no al ALB.
+  # ---------------------------------------------------------------------------
   custom_error_response {
     error_code            = 403
     response_code         = 200
@@ -186,32 +203,16 @@ resource "aws_cloudfront_distribution" "main" {
     error_caching_min_ttl = 0
   }
 
-  # -------------------------------------------------------------------------
-  # RESTRICCIONES GEO (ninguna para demo)
-  # -------------------------------------------------------------------------
   restrictions {
     geo_restriction {
       restriction_type = "none"
     }
   }
 
-  # -------------------------------------------------------------------------
-  # CERTIFICADO SSL (CloudFront default)
-  # Para dominio personalizado, usar ACM en us-east-1
-  # -------------------------------------------------------------------------
   viewer_certificate {
     cloudfront_default_certificate = true
     minimum_protocol_version       = "TLSv1.2_2021"
   }
-
-  # -------------------------------------------------------------------------
-  # LOGGING (deshabilitado en demo para reducir costos)
-  # -------------------------------------------------------------------------
-  # logging_config {
-  #   include_cookies = false
-  #   bucket          = "${var.project_name}-cloudfront-logs.s3.amazonaws.com"
-  #   prefix          = "cloudfront/"
-  # }
 
   tags = merge(var.common_tags, {
     Name = "${local.name_prefix}-cloudfront"

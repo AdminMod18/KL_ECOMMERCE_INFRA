@@ -190,7 +190,9 @@ module "api_gateway" {
 
 # =============================================================================
 # MÓDULO 10: CLOUDFRONT - CDN Global
-# Depende de: s3, api_gateway
+# Depende de: s3, alb
+# Behavior /api/* → ALB directo (CloudFront → ALB → ECS)
+# Behavior default → S3 (frontend estático)
 # =============================================================================
 module "cloudfront" {
   source = "./modules/cloudfront"
@@ -199,7 +201,8 @@ module "cloudfront" {
   environment                     = var.environment
   frontend_bucket_regional_domain = module.s3.frontend_bucket_regional_domain
   frontend_bucket_id              = module.s3.frontend_bucket_name
-  api_gateway_url                 = module.api_gateway.api_url
+  alb_dns_name                    = module.alb.alb_dns_name   # origen /api/*
+  api_gateway_url                 = module.api_gateway.api_url # mantenido para outputs
   api_gateway_stage_name          = var.api_gateway_stage_name
   common_tags                     = local.common_tags
 }
