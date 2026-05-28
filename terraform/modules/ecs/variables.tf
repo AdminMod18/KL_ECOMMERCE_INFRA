@@ -99,6 +99,11 @@ variable "db_password" {
   sensitive   = true
 }
 
+variable "alb_dns_name" {
+  description = "DNS público del ALB (ej. kl-ecommerce-prod-alb-985321400.us-east-2.elb.amazonaws.com). Usado para SERVICE_*_URL en las task definitions."
+  type        = string
+}
+
 variable "desired_count" {
   description = "Número deseado de tasks por servicio"
   type        = number

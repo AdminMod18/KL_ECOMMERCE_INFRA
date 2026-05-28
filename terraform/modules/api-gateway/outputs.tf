@@ -13,8 +13,13 @@ output "api_arn" {
 }
 
 output "api_url" {
-  description = "URL de invocación del API Gateway"
+  description = "URL de invocación del API Gateway (base para llamadas del frontend)"
   value       = aws_api_gateway_stage.main.invoke_url
+}
+
+output "api_url_with_path" {
+  description = "URL completa del API Gateway incluyendo el path /api (usar como VITE_API_URL en el frontend)"
+  value       = "${aws_api_gateway_stage.main.invoke_url}/api"
 }
 
 output "api_execution_arn" {

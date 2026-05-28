@@ -103,13 +103,15 @@ resource "aws_ecs_task_definition" "microservices" {
         # Nombre del servicio para trazabilidad
         { name = "SPRING_APPLICATION_NAME", value = each.key },
 
-        # URLs de otros microservicios (service discovery interno via ALB)
-        { name = "SERVICE_AUTH_URL", value = "http://${local.name_prefix}-alb/auth" },
-        { name = "SERVICE_USER_URL", value = "http://${local.name_prefix}-alb/users" },
-        { name = "SERVICE_ORDER_URL", value = "http://${local.name_prefix}-alb/orders" },
-        { name = "SERVICE_PRODUCT_URL", value = "http://${local.name_prefix}-alb/products" },
-        { name = "SERVICE_PAYMENT_URL", value = "http://${local.name_prefix}-alb/payments" },
-        { name = "SERVICE_NOTIFICATION_URL", value = "http://${local.name_prefix}-alb/notifications" },
+        # URLs inter-servicio via ALB DNS real (resolvible dentro de la VPC).
+        # Usar var.alb_dns_name (output dinámico de module.alb) en lugar del
+        # nombre corto "${name_prefix}-alb" que NO resuelve en Route53 privado.
+        { name = "SERVICE_AUTH_URL",         value = "http://${var.alb_dns_name}/auth" },
+        { name = "SERVICE_USER_URL",         value = "http://${var.alb_dns_name}/users" },
+        { name = "SERVICE_ORDER_URL",        value = "http://${var.alb_dns_name}/orders" },
+        { name = "SERVICE_PRODUCT_URL",      value = "http://${var.alb_dns_name}/products" },
+        { name = "SERVICE_PAYMENT_URL",      value = "http://${var.alb_dns_name}/payments" },
+        { name = "SERVICE_NOTIFICATION_URL", value = "http://${var.alb_dns_name}/notifications" },
       ]
 
       # Secrets (contraseña de BD via SSM Parameter Store)

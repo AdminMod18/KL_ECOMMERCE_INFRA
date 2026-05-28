@@ -89,6 +89,11 @@ output "api_gateway_url" {
   value       = module.api_gateway.api_url
 }
 
+output "api_gateway_url_with_path" {
+  description = "URL del API Gateway con path /api. Usar como VITE_API_URL en el build del frontend."
+  value       = module.api_gateway.api_url_with_path
+}
+
 output "api_gateway_id" {
   description = "ID del API Gateway REST API"
   value       = module.api_gateway.api_id
@@ -98,8 +103,13 @@ output "api_gateway_id" {
 # CloudFront Outputs
 # -----------------------------------------------------------------------------
 output "cloudfront_url" {
-  description = "URL del dominio CloudFront (punto de entrada principal)"
+  description = "URL del dominio CloudFront (punto de entrada principal del frontend)"
   value       = "https://${module.cloudfront.cloudfront_domain_name}"
+}
+
+output "cloudfront_api_url" {
+  description = "URL pública de la API via CloudFront. Usar como VITE_API_URL en el build del frontend. Formato: https://<domain>/api"
+  value       = module.cloudfront.cloudfront_api_url
 }
 
 output "cloudfront_domain_name" {
@@ -108,7 +118,7 @@ output "cloudfront_domain_name" {
 }
 
 output "cloudfront_distribution_id" {
-  description = "ID de la distribución CloudFront"
+  description = "ID de la distribución CloudFront (necesario para invalidar cache tras deploy)"
   value       = module.cloudfront.distribution_id
 }
 
@@ -194,10 +204,14 @@ output "rds_security_group_id" {
 output "access_summary" {
   description = "Resumen de URLs de acceso a la infraestructura"
   value = {
-    frontend_url    = "https://${module.cloudfront.cloudfront_domain_name}"
-    api_gateway_url = module.api_gateway.api_url
-    alb_url         = "http://${module.alb.alb_dns_name}"
-    rds_endpoint    = module.rds.db_endpoint
-    ecs_cluster     = module.ecs.cluster_name
+    frontend_url        = "https://${module.cloudfront.cloudfront_domain_name}"
+    # VITE_API_URL para el build del frontend (CloudFront proxea /api/* a API Gateway → ALB)
+    frontend_api_url    = module.cloudfront.cloudfront_api_url
+    api_gateway_url     = module.api_gateway.api_url
+    alb_dns_name        = module.alb.alb_dns_name
+    alb_url             = "http://${module.alb.alb_dns_name}"
+    rds_endpoint        = module.rds.db_endpoint
+    ecs_cluster         = module.ecs.cluster_name
+    cloudfront_dist_id  = module.cloudfront.distribution_id
   }
 }

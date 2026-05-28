@@ -158,6 +158,7 @@ module "ecs" {
   ecs_task_execution_role_arn   = module.iam.ecs_task_execution_role_arn
   ecs_task_role_arn             = module.iam.ecs_task_role_arn
   cloudwatch_log_group_names    = module.cloudwatch.log_group_names
+  alb_dns_name                  = module.alb.alb_dns_name  # DNS real del ALB para SERVICE_*_URL inter-servicio
   rds_endpoint                  = module.rds.db_host   # .address (solo hostname, sin :puerto)
   rds_port                      = module.rds.db_port
   db_name                       = var.db_name
